@@ -4,7 +4,7 @@ import { sb } from './supabase'
 
 const BLN = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des']
 const RL = { admin: 'Wali Kelas', bendahara: 'Bendahara', siswa: 'Siswa' }
-const SL = { Lunas: 'Lunas', Sebagian: 'Bayar Sebagian', Belum: 'Belum Bayar' }
+const SL = { Lunas: 'Lunas', Sebagian: 'Bayar Sebagian', Belum: 'Belum Bayar', Libur: 'Tidak Dipungut' }
 const rp = n => (n < 0 ? '-' : '') + 'Rp' + Math.abs(+n || 0).toLocaleString('id-ID')
 const p2 = n => String(n).padStart(2, '0')
 const fd = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
@@ -37,7 +37,7 @@ const T = ({ h, r }) => (
       : <tr><td colSpan={h.length} className="empty">Belum ada data.</td></tr>}</tbody>
   </table></div>
 )
-const Tag = ({ s }) => <span className={'tag ' + s}>{SL[s] || s}</span>
+const Tag = ({ s }) => <span className={'tag ' + s} style={s === 'Libur' ? { background: 'var(--bd)', color: 'var(--mu)' } : undefined}>{SL[s] || s}</span>
 
 function Modal({ title, fields, onSave, onClose }) {
   const [v, setV] = useState(() => Object.fromEntries(fields.map(f => [f.k, f.def ?? ''])))
@@ -140,8 +140,9 @@ function Main({ me }) {
   const pl = makePeriods(D.set.frequency, D.set.school_year), cur = per || pl[0].k
   const pstart = Object.fromEntries(D.periods.map(p => [p.id, p.starts_on]))
   const paid = (sid, k) => sum(D.pay.filter(p => p.student_id === sid && !p.voided_at && pstart[p.period_id] === k), p => p.amount)
-  const stat = (sid, k) => { const v = paid(sid, k); return v >= D.set.amount ? 'Lunas' : v > 0 ? 'Sebagian' : 'Belum' }
-  const P = { me, D, load, pl, per: cur, setPer, paid, stat, staff, admin }
+  const nc = k => D.periods.some(p => p.starts_on === k && p.no_collection)
+  const stat = (sid, k) => { if (nc(k)) return 'Libur'; const v = paid(sid, k); return v >= D.set.amount ? 'Lunas' : v > 0 ? 'Sebagian' : 'Belum' }
+  const P = { me, D, load, pl, per: cur, setPer, paid, stat, nc, staff, admin }
   const tabs = [['dash', 'Dashboard', 1], ['siswa', 'Data Siswa', admin], ['bayar', 'Pembayaran Kas', staff], ['buku', 'Buku Kas', 1],
     ['lap', 'Laporan', staff], ['saya', 'Status Saya', !staff], ['set', 'Pengaturan', admin]].filter(t => t[2])
   const View = { dash: Dash, siswa: Siswa, bayar: Bayar, buku: Buku, lap: Lap, saya: Saya, set: Pengaturan }[tab]
@@ -172,7 +173,7 @@ function Dash({ D, staff, stat, per }) {
       <div className="card st"><span>Total pengeluaran</span><b className="out">{rp(o)}</b></div>
       {staff && <><div className="card st"><span>Jumlah siswa</span><b>{act.length}</b></div>
         <div className="card st"><span>Sudah membayar</span><b>{lunas}</b></div>
-        <div className="card st"><span>Belum membayar</span><b>{act.length - lunas}</b></div></>}
+        <div className="card st"><span>Belum membayar</span><b>{act.filter(s => !['Lunas', 'Libur'].includes(stat(s.id, per))).length}</b></div></>}
     </div>
     <div className="card"><h2>Pemasukan &amp; pengeluaran 6 bulan</h2>
       <div className="bars">{m.map(x => <div key={x.l}><i style={{ height: x.i / mx * 110, background: 'var(--ok)' }} /><i style={{ height: x.o / mx * 110, background: 'var(--no)', marginLeft: 2 }} /><br />{x.l}</div>)}</div></div>
@@ -238,15 +239,23 @@ function Siswa({ me, D, load }) {
   </>)
 }
 
-function Bayar({ me, D, load, pl, per, setPer, paid, stat }) {
+function Bayar({ me, D, load, pl, per, setPer, paid, stat, nc }) {
   const [m, setM] = useState(false)
   const name = id => D.students.find(s => s.id === id)?.full_name || '(dihapus)'
   const pdate = id => D.periods.find(p => p.id === id)?.starts_on
+  const libur = nc(per)
+  const periodId = async (pr, flag) => {
+    const row = { class_id: me.class_id, label: pr.l, starts_on: pr.k, ends_on: pr.end }
+    if (flag !== undefined) row.no_collection = flag
+    const { error } = await sb.from('periods').upsert(row, { onConflict: 'class_id,starts_on', ignoreDuplicates: flag === undefined })
+    if (error) return { error }
+    return sb.from('periods').select('id').eq('class_id', me.class_id).eq('starts_on', pr.k).single()
+  }
   const save = async v => {
     const pr = pl.find(p => p.k === v.period)
+    if (nc(v.period)) return 'Periode ini ditandai tidak dipungut iuran. Batalkan tandanya jika ingin mencatat pembayaran.'
     if (!v.student_id || !(+v.amount > 0)) return 'Lengkapi siswa dan nominal.'
-    await sb.from('periods').upsert({ class_id: me.class_id, label: pr.l, starts_on: pr.k, ends_on: pr.end }, { onConflict: 'class_id,starts_on', ignoreDuplicates: true })
-    const { data: p, error: e1 } = await sb.from('periods').select('id').eq('class_id', me.class_id).eq('starts_on', pr.k).single()
+    const { data: p, error: e1 } = await periodId(pr)
     if (e1) return e1.message
     const { error } = await sb.from('payments').insert({ class_id: me.class_id, student_id: v.student_id, period_id: p.id, paid_on: v.paid_on, amount: +v.amount })
     if (error) return error.code === '23505' ? 'Pembayaran identik sudah tercatat.' : error.message
@@ -257,12 +266,35 @@ function Bayar({ me, D, load, pl, per, setPer, paid, stat }) {
     const { error } = await sb.from('payments').update({ voided_at: new Date().toISOString(), void_reason: why || 'Dibatalkan' }).eq('id', p.id)
     error ? alert(error.message) : load()
   }
+  const markAll = async () => {
+    const pr = pl.find(p => p.k === per)
+    const todo = D.students.filter(s => s.active && D.set.amount - paid(s.id, per) > 0)
+    if (!todo.length) return alert('Semua siswa aktif sudah lunas pada periode ini.')
+    if (!confirm(`Tandai ${todo.length} siswa LUNAS untuk ${pr.l}?\nNominal sesuai kekurangan masing-masing dan tanggal bayar dicatat ${tgl(pr.k)}.`)) return
+    const { data: p, error } = await periodId(pr)
+    if (error) return alert(error.message)
+    const rows = todo.map(s => ({ class_id: me.class_id, student_id: s.id, period_id: p.id, paid_on: pr.k, amount: D.set.amount - paid(s.id, per) }))
+    const r = await sb.from('payments').insert(rows)
+    r.error ? alert(r.error.code === '23505' ? 'Sebagian pembayaran identik sudah tercatat.' : r.error.message) : load()
+  }
+  const toggleLibur = async () => {
+    const pr = pl.find(p => p.k === per), cp = D.periods.find(p => p.starts_on === per)
+    if (!libur) {
+      if (cp && D.pay.some(x => x.period_id === cp.id && !x.voided_at)) return alert('Periode ini sudah memiliki pembayaran. Batalkan pembayaran tersebut terlebih dahulu.')
+      if (!confirm(`Tandai ${pr.l} sebagai periode TIDAK DIPUNGUT iuran kas? Periode ini tidak dihitung dalam sisa tunggakan.`)) return
+    }
+    const { error } = await periodId(pr, !libur)
+    error ? alert(error.message) : load()
+  }
   return (<>
     <h1>Pembayaran Kas</h1><p className="sub">Nominal kas: {rp(D.set.amount)} per {D.set.frequency === 'Bulanan' ? 'bulan' : 'minggu'}.</p>
-    <div className="row"><select value={per} onChange={e => setPer(e.target.value)}>{pl.map(p => <option key={p.k} value={p.k}>{p.l}</option>)}</select><span className="sp" />
-      <button className="b" onClick={() => setM(true)}>+ Catat Pembayaran</button></div>
+    <div className="row"><select value={per} onChange={e => setPer(e.target.value)}>{pl.map(p => <option key={p.k} value={p.k}>{p.l}{nc(p.k) ? ' (tidak dipungut)' : ''}</option>)}</select><span className="sp" />
+      <button className="b g" onClick={toggleLibur}>{libur ? 'Batalkan Tanda Tidak Dipungut' : 'Tandai Tidak Dipungut'}</button>
+      <button className="b g" disabled={libur} onClick={markAll}>Tandai Semua Lunas</button>
+      <button className="b" disabled={libur} onClick={() => setM(true)}>+ Catat Pembayaran</button></div>
+    {libur && <div className="card" style={{ background: 'var(--wab)' }}>Periode ini ditandai <b>tidak dipungut iuran kas</b> dan tidak dihitung dalam sisa tunggakan.</div>}
     <div className="card"><h2>Status per siswa</h2><T h={['Siswa', 'Dibayar', 'Kurang', 'Status']}
-      r={D.students.filter(s => s.active).map(s => [s.full_name, rp(paid(s.id, per)), rp(Math.max(0, D.set.amount - paid(s.id, per))), <Tag s={stat(s.id, per)} />])} /></div>
+      r={D.students.filter(s => s.active).map(s => [s.full_name, rp(paid(s.id, per)), libur ? '-' : rp(Math.max(0, D.set.amount - paid(s.id, per))), <Tag s={stat(s.id, per)} />])} /></div>
     <div className="card"><h2>Riwayat pembayaran</h2><T h={['Tanggal', 'Siswa', 'Periode', 'Nominal', '']}
       r={D.pay.slice(0, 50).map(p => [<span className={p.voided_at ? 'void' : ''}>{tgl(p.paid_on)}</span>, name(p.student_id), pdate(p.period_id) ? tgl(pdate(p.period_id)) : '-', rp(p.amount),
         p.voided_at ? 'Dibatalkan' : <button className="b d s" onClick={() => vp(p)}>Batalkan</button>])} /></div>
@@ -302,14 +334,20 @@ function Buku({ me, D, load, staff }) {
   </>)
 }
 
-function Lap({ D, pl, paid, stat }) {
+function Lap({ D, pl, paid, stat, nc }) {
   const [t, setT] = useState('1'), [from, setFrom] = useState(''), [to, setTo] = useState(''), [k, setK] = useState(pl[0].k)
   const L = D.ledger.filter(x => (!from || x.entry_date >= from) && (!to || x.entry_date <= to))
   const inn = a => sum(a.filter(x => x.entry_type === 'masuk'), x => x.amount), out = a => sum(a.filter(x => x.entry_type === 'keluar'), x => x.amount)
   const titles = { 1: 'Pembayaran kas per siswa', 2: 'Siswa belum membayar', 3: 'Laporan pemasukan', 4: 'Laporan pengeluaran', 5: 'Saldo akhir', 6: 'Rekapitulasi bulanan' }
+  const due = pl.filter(p => !nc(p.k)), dueKeys = new Set(due.map(p => p.k)), skipped = pl.length - due.length
+  const pstart = Object.fromEntries(D.periods.map(p => [p.id, p.starts_on]))
+  const arrears = s => Math.max(0, due.length * D.set.amount - sum(D.pay.filter(x => x.student_id === s.id && !x.voided_at && dueKeys.has(pstart[x.period_id])), x => x.amount))
   let d
-  if (t === '1') d = { h: ['Siswa', 'Jumlah bayar', 'Total dibayar'], r: D.students.map(s => { const p = D.pay.filter(x => x.student_id === s.id && !x.voided_at && (!from || x.paid_on >= from) && (!to || x.paid_on <= to)); return [s.full_name, p.length, rp(sum(p, x => x.amount))] }) }
-  else if (t === '2') d = { h: ['Siswa', 'Dibayar', 'Kekurangan', 'Status'], r: D.students.filter(s => s.active && stat(s.id, k) !== 'Lunas').map(s => [s.full_name, rp(paid(s.id, k)), rp(D.set.amount - paid(s.id, k)), SL[stat(s.id, k)]]) }
+  if (t === '1') {
+    const rows = D.students.map(s => { const p = D.pay.filter(x => x.student_id === s.id && !x.voided_at && (!from || x.paid_on >= from) && (!to || x.paid_on <= to)); return { s, n: p.length, v: sum(p, x => x.amount), a: s.active ? arrears(s) : null } })
+    d = { h: ['Siswa', 'Jumlah bayar', 'Total dibayar', 'Sisa tunggakan'], r: [...rows.map(x => [x.s.full_name, x.n, rp(x.v), x.a === null ? '-' : rp(x.a)]), ['TOTAL', '', rp(sum(rows, x => x.v)), rp(sum(rows, x => x.a || 0))]] }
+  }
+  else if (t === '2') d = { h: ['Siswa', 'Dibayar', 'Kekurangan', 'Status'], r: D.students.filter(s => s.active && !['Lunas', 'Libur'].includes(stat(s.id, k))).map(s => [s.full_name, rp(paid(s.id, k)), rp(D.set.amount - paid(s.id, k)), SL[stat(s.id, k)]]) }
   else if (t === '3' || t === '4') { const y = t === '3' ? 'masuk' : 'keluar', x = L.filter(e => e.entry_type === y); d = { h: ['Tanggal', 'Keterangan', 'Kategori', 'Nominal'], r: [...x.map(e => [tgl(e.entry_date), e.description, e.category, rp(e.amount)]), ['', '', 'TOTAL', rp(sum(x, e => e.amount))]] } }
   else if (t === '5') { const a = D.ledger.filter(x => !to || x.entry_date <= to); d = { h: ['Keterangan', 'Nominal'], r: [['Total pemasukan', rp(inn(a))], ['Total pengeluaran', rp(out(a))], ['Saldo akhir', rp(inn(a) - out(a))]] } }
   else { const ms = [...new Set(L.map(e => e.entry_date.slice(0, 7)))].sort(); d = { h: ['Bulan', 'Pemasukan', 'Pengeluaran', 'Selisih'], r: ms.map(m => { const x = L.filter(e => e.entry_date.startsWith(m)); return [BLN[+m.slice(5) - 1] + ' ' + m.slice(0, 4), rp(inn(x)), rp(out(x)), rp(inn(x) - out(x))] }) } }
@@ -320,7 +358,7 @@ function Lap({ D, pl, paid, stat }) {
       {t === '2' ? <select value={k} onChange={e => setK(e.target.value)}>{pl.map(p => <option key={p.k} value={p.k}>{p.l}</option>)}</select>
         : <><input type="date" value={from} onChange={e => setFrom(e.target.value)} /><input type="date" value={to} onChange={e => setTo(e.target.value)} /></>}
       <span className="sp" /><button className="b g" onClick={() => window.print()}>Cetak / PDF</button><button className="b g" onClick={() => exp('csv')}>CSV</button><button className="b" onClick={() => exp('xlsx')}>Excel</button></div>
-    <div className="card"><h2>{titles[t]} — Kelas {D.cls?.name}, TA {D.set.school_year}</h2><T h={d.h} r={d.r} /></div>
+    <div className="card"><h2>{titles[t]} — Kelas {D.cls?.name}, TA {D.set.school_year}</h2><T h={d.h} r={d.r} />{t === '1' && <p className="sub" style={{ fontSize: 13, marginTop: 10 }}>Sisa tunggakan dihitung dari {due.length} periode berjalan ({rp(D.set.amount)} per periode){skipped ? `, tidak termasuk ${skipped} periode yang ditandai tidak dipungut` : ''}. Siswa nonaktif tidak dihitung.</p>}</div>
   </>)
 }
 
