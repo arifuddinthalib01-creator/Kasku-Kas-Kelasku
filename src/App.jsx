@@ -30,6 +30,7 @@ function makePeriods(freq, sy) {
   return o.reverse()
 }
 
+const Footer = () => <p style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 12, margin: '28px 0 0' }}>© {new Date().getFullYear()} Kasku – Kas Kelasku · Dikembangkan oleh Arifuddin Thalib, S.Pd.</p>
 const T = ({ h, r }) => (
   <div className="tw"><table>
     <thead><tr>{h.map((x, i) => <th key={i}>{x}</th>)}</tr></thead>
@@ -75,7 +76,7 @@ function Login() {
       <button className="b" style={{ width: '100%' }} onClick={go}>{reg ? 'Daftar' : 'Masuk'}</button>
       <p className="sub" style={{ marginTop: 12, fontSize: 13 }}>{reg ? 'Wali Kelas baru: daftar lalu buat kelas Anda. Bendahara dan siswa: gunakan email yang diundang. ' : 'Belum punya akun? '}
         <a href="#" onClick={e => { e.preventDefault(); setReg(!reg); setMsg('') }}>{reg ? 'Kembali ke masuk' : 'Daftar'}</a></p>
-    </div></div>
+    </div><Footer /></div>
   )
 }
 
@@ -102,7 +103,7 @@ function NewClass({ ses, onDone }) {
       <label>Frekuensi</label><select value={v.frequency} onChange={set('frequency')}><option>Mingguan</option><option>Bulanan</option></select>
       <p className="out">{msg}</p>
       <div className="row"><button className="b" disabled={busy} onClick={go}>Buat kelas</button><button className="b g" onClick={() => sb.auth.signOut()}>Keluar</button></div>
-    </div></div>
+    </div><Footer /></div>
   )
 }
 
@@ -152,7 +153,7 @@ function Main({ me }) {
         {tabs.map(t => <button key={t[0]} className={'nb ' + (tab === t[0] ? 'on' : '')} onClick={() => setTab(t[0])}>{t[1]}</button>)}
         <div className="who">{me.full_name}<br />{RL[me.role]}</div>
         <button className="nb" onClick={() => sb.auth.signOut()}>Keluar</button></aside>
-      <main><View {...P} /></main>
+      <main><View {...P} /><Footer /></main>
     </div>
   )
 }
