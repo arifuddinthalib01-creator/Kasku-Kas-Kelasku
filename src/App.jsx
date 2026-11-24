@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { sb } from './supabase'
-
+ 
 const BLN = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des']
 const RL = { admin: 'Wali Kelas', bendahara: 'Bendahara', siswa: 'Siswa' }
 const SL = { Lunas: 'Lunas', Sebagian: 'Bayar Sebagian', Belum: 'Belum Bayar', Libur: 'Tidak Dipungut' }
@@ -10,7 +10,7 @@ const p2 = n => String(n).padStart(2, '0')
 const fd = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
 const tgl = s => { const [y, m, d] = s.split('-'); return `${+d} ${BLN[m - 1]} ${y}` }
 const sum = (a, f = x => x) => a.reduce((s, x) => s + f(x), 0)
-
+ 
 function makePeriods(freq, sy) {
   const now = new Date(), o = []
   let y = parseInt(sy) || now.getFullYear()
@@ -29,7 +29,7 @@ function makePeriods(freq, sy) {
   }
   return o.reverse()
 }
-
+ 
 const Footer = () => <p style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 12, margin: '28px 0 0' }}>© {new Date().getFullYear()} Kasku – Kas Kelasku · Dikembangkan oleh Arifuddin Thalib, S.Pd.</p>
 const T = ({ h, r }) => (
   <div className="tw"><table>
@@ -39,7 +39,7 @@ const T = ({ h, r }) => (
   </table></div>
 )
 const Tag = ({ s }) => <span className={'tag ' + s} style={s === 'Libur' ? { background: 'var(--bd)', color: 'var(--mu)' } : undefined}>{SL[s] || s}</span>
-
+ 
 function Modal({ title, fields, onSave, onClose }) {
   const [v, setV] = useState(() => Object.fromEntries(fields.map(f => [f.k, f.def ?? ''])))
   const [e, setE] = useState(''), [busy, setBusy] = useState(false)
@@ -57,7 +57,7 @@ function Modal({ title, fields, onSave, onClose }) {
     </div></div>
   )
 }
-
+ 
 function Login() {
   const [email, setEmail] = useState(''), [pw, setPw] = useState(''), [reg, setReg] = useState(false), [msg, setMsg] = useState('')
   const go = async () => {
@@ -79,7 +79,7 @@ function Login() {
     </div><Footer /></div>
   )
 }
-
+ 
 function NewClass({ ses, onDone }) {
   const t = new Date(), y = t.getMonth() >= 6 ? t.getFullYear() : t.getFullYear() - 1
   const [v, setV] = useState({ code: '', full_name: '', class_name: '', school_year: `${y}/${y + 1}`, amount: 5000, frequency: 'Mingguan' })
@@ -106,7 +106,7 @@ function NewClass({ ses, onDone }) {
     </div><Footer /></div>
   )
 }
-
+ 
 export default function App() {
   const [ses, setSes] = useState(undefined), [me, setMe] = useState(null)
   useEffect(() => {
@@ -123,14 +123,16 @@ export default function App() {
   if (me === false) return <NewClass ses={ses} onDone={() => { setMe(null); sb.from('profiles').select('*').eq('id', ses.user.id).maybeSingle().then(({ data }) => setMe(data || false)) }} />
   return <Main me={me} />
 }
-
+ 
 function Main({ me }) {
   const [tab, setTab] = useState('dash'), [D, setD] = useState(null), [per, setPer] = useState(''), [err, setErr] = useState('')
   const staff = me.role !== 'siswa', admin = me.role === 'admin'
   const load = useCallback(async () => {
     const q = t => sb.from(t).select('*')
-    const r = await Promise.all([q('cash_settings').maybeSingle(), q('students').order('seq_no'), q('payments').order('paid_on', { ascending: false }),
-      q('transactions').order('tx_date', { ascending: false }), q('periods'), sb.rpc('class_ledger'), q('classes').maybeSingle()])
+    const page = async fn => { let out = [], from = 0; for (;;) { const { data, error } = await fn(from, from + 999); if (error) return { error }; out = out.concat(data); if (data.length < 1000) return { data: out }; from += 1000 } }
+    const r = await Promise.all([q('cash_settings').maybeSingle(), q('students').order('seq_no'), page((a, b) => sb.from('payments').select('*').order('paid_on', { ascending: false }).order('id').range(a, b)),
+      page((a, b) => sb.from('transactions').select('*').order('tx_date', { ascending: false }).order('id').range(a, b)), q('periods'),
+      page((a, b) => sb.rpc('class_ledger').order('entry_date', { ascending: false }).order('description').order('category').order('entry_type').order('amount').range(a, b)), q('classes').maybeSingle()])
     const bad = r.find(x => x.error); if (bad) return setErr(bad.error.message)
     setD({ set: r[0].data, students: r[1].data, pay: r[2].data, tx: r[3].data, periods: r[4].data, ledger: r[5].data, cls: r[6].data })
   }, [])
@@ -157,7 +159,7 @@ function Main({ me }) {
     </div>
   )
 }
-
+ 
 function Dash({ D, staff, stat, per }) {
   const L = D.ledger, i = sum(L.filter(x => x.entry_type === 'masuk'), x => x.amount), o = sum(L.filter(x => x.entry_type === 'keluar'), x => x.amount)
   const act = D.students.filter(s => s.active), lunas = act.filter(s => stat(s.id, per) === 'Lunas').length
@@ -181,11 +183,11 @@ function Dash({ D, staff, stat, per }) {
     <div className="card"><h2>Transaksi terbaru</h2><Ledger rows={L.slice(0, 6)} /></div>
   </>)
 }
-
+ 
 const Ledger = ({ rows }) => <T h={['Tanggal', 'Keterangan', 'Kategori', 'Jenis', 'Nominal']}
   r={rows.map(x => [tgl(x.entry_date), x.description, x.category, <span className={'tag ' + x.entry_type}>{x.entry_type}</span>,
     <b className={x.entry_type === 'masuk' ? 'in' : 'out'}>{x.entry_type === 'masuk' ? '+' : '-'}{rp(x.amount)}</b>])} />
-
+ 
 function Siswa({ me, D, load }) {
   const [q, setQ] = useState(''), [m, setM] = useState(null)
   const L = D.students.filter(s => (s.full_name + (s.nis || '')).toLowerCase().includes(q.toLowerCase()))
@@ -239,12 +241,26 @@ function Siswa({ me, D, load }) {
     {m && <Modal title={m.title} fields={m.fields} onSave={m.save} onClose={() => setM(null)} />}
   </>)
 }
-
+ 
+function usePaged(list, init = 20) {
+  const [pg, setPg] = useState(0), [size, setSize] = useState(init)
+  const pages = Math.max(1, Math.ceil(list.length / size)), cur = Math.min(pg, pages - 1)
+  const bar = list.length > 10 && (
+    <div className="row" style={{ marginTop: 12 }}>
+      <span className="sub" style={{ margin: 0 }}>{list.length} data · Halaman {cur + 1} dari {pages}</span><span className="sp" />
+      <select value={size} onChange={e => { setSize(+e.target.value); setPg(0) }}>{[10, 20, 50, 100].map(n => <option key={n} value={n}>{n} per halaman</option>)}</select>
+      <button className="b g s" disabled={cur === 0} onClick={() => setPg(cur - 1)}>‹ Sebelumnya</button>
+      <button className="b g s" disabled={cur >= pages - 1} onClick={() => setPg(cur + 1)}>Berikutnya ›</button>
+    </div>)
+  return [list.slice(cur * size, cur * size + size), bar]
+}
+ 
 function Bayar({ me, D, load, pl, per, setPer, paid, stat, nc }) {
   const [m, setM] = useState(false)
   const name = id => D.students.find(s => s.id === id)?.full_name || '(dihapus)'
   const pdate = id => D.periods.find(p => p.id === id)?.starts_on
   const libur = nc(per)
+  const [pay, payBar] = usePaged(D.pay)
   const periodId = async (pr, flag) => {
     const row = { class_id: me.class_id, label: pr.l, starts_on: pr.k, ends_on: pr.end }
     if (flag !== undefined) row.no_collection = flag
@@ -297,17 +313,18 @@ function Bayar({ me, D, load, pl, per, setPer, paid, stat, nc }) {
     <div className="card"><h2>Status per siswa</h2><T h={['Siswa', 'Dibayar', 'Kurang', 'Status']}
       r={D.students.filter(s => s.active).map(s => [s.full_name, rp(paid(s.id, per)), libur ? '-' : rp(Math.max(0, D.set.amount - paid(s.id, per))), <Tag s={stat(s.id, per)} />])} /></div>
     <div className="card"><h2>Riwayat pembayaran</h2><T h={['Tanggal', 'Siswa', 'Periode', 'Nominal', '']}
-      r={D.pay.slice(0, 50).map(p => [<span className={p.voided_at ? 'void' : ''}>{tgl(p.paid_on)}</span>, name(p.student_id), pdate(p.period_id) ? tgl(pdate(p.period_id)) : '-', rp(p.amount),
-        p.voided_at ? 'Dibatalkan' : <button className="b d s" onClick={() => vp(p)}>Batalkan</button>])} /></div>
+      r={pay.map(p => [<span className={p.voided_at ? 'void' : ''}>{tgl(p.paid_on)}</span>, name(p.student_id), pdate(p.period_id) ? tgl(pdate(p.period_id)) : '-', rp(p.amount),
+        p.voided_at ? 'Dibatalkan' : <button className="b d s" onClick={() => vp(p)}>Batalkan</button>])} />{payBar}</div>
     {m && <Modal title="Catat Pembayaran" onClose={() => setM(false)} onSave={save} fields={[
       { k: 'student_id', label: 'Siswa', def: D.students.find(s => s.active)?.id ?? '', options: D.students.filter(s => s.active).map(s => [s.id, s.full_name]) },
       { k: 'paid_on', label: 'Tanggal', type: 'date', def: fd(new Date()) }, { k: 'period', label: 'Periode', def: per, options: pl.map(p => [p.k, p.l]) },
       { k: 'amount', label: 'Nominal (Rp)', type: 'number', def: D.set.amount }]} />}
   </>)
 }
-
+ 
 function Buku({ me, D, load, staff }) {
   const [f, setF] = useState('semua'), [m, setM] = useState(null)
+  const [led, ledBar] = usePaged(D.ledger.filter(x => f === 'semua' || x.entry_type === f))
   const add = t => setM({
     t, save: async v => {
       if (!v.description.trim() || !(+v.amount > 0)) return 'Lengkapi keterangan dan nominal.'
@@ -326,7 +343,7 @@ function Buku({ me, D, load, staff }) {
     <h1>Buku Kas</h1><p className="sub">Saldo: <b>{rp(saldo)}</b></p>
     <div className="row"><select value={f} onChange={e => setF(e.target.value)}><option>semua</option><option>masuk</option><option>keluar</option></select><span className="sp" />
       {staff && <><button className="b" onClick={() => add('masuk')}>+ Pemasukan</button><button className="b d" onClick={() => add('keluar')}>+ Pengeluaran</button></>}</div>
-    <div className="card"><Ledger rows={D.ledger.filter(x => f === 'semua' || x.entry_type === f)} /></div>
+    <div className="card"><Ledger rows={led} />{ledBar}</div>
     {staff && <div className="card"><h2>Transaksi non-kas</h2><T h={['Tanggal', 'Keterangan', 'Nominal', '']}
       r={D.tx.map(x => [<span className={x.voided_at ? 'void' : ''}>{tgl(x.tx_date)}</span>, x.description, rp(x.amount), x.voided_at ? 'Dibatalkan' : <button className="b d s" onClick={() => vt(x)}>Batalkan</button>])} /></div>}
     {m && <Modal title={m.t === 'masuk' ? 'Tambah Pemasukan' : 'Tambah Pengeluaran'} onSave={m.save} onClose={() => setM(null)} fields={[
@@ -334,7 +351,7 @@ function Buku({ me, D, load, staff }) {
       { k: 'category', label: 'Kategori', def: cats[0], options: cats.map(c => [c, c]) }, { k: 'amount', label: 'Nominal (Rp)', type: 'number' }]} />}
   </>)
 }
-
+ 
 function Lap({ D, pl, paid, stat, nc }) {
   const [t, setT] = useState('1'), [from, setFrom] = useState(''), [to, setTo] = useState(''), [k, setK] = useState(pl[0].k)
   const L = D.ledger.filter(x => (!from || x.entry_date >= from) && (!to || x.entry_date <= to))
@@ -362,7 +379,7 @@ function Lap({ D, pl, paid, stat, nc }) {
     <div className="card"><h2>{titles[t]} — Kelas {D.cls?.name}, TA {D.set.school_year}</h2><T h={d.h} r={d.r} />{t === '1' && <p className="sub" style={{ fontSize: 13, marginTop: 10 }}>Sisa tunggakan dihitung dari {due.length} periode berjalan ({rp(D.set.amount)} per periode){skipped ? `, tidak termasuk ${skipped} periode yang ditandai tidak dipungut` : ''}. Siswa nonaktif tidak dihitung.</p>}</div>
   </>)
 }
-
+ 
 function Saya({ D, pl, paid, stat }) {
   const s = D.students[0]
   if (!s) return <><h1>Status Saya</h1><p className="sub">Akun ini belum terhubung ke data siswa.</p></>
@@ -372,7 +389,7 @@ function Saya({ D, pl, paid, stat }) {
     <div className="card"><h2>Riwayat pembayaran saya</h2><T h={['Tanggal', 'Nominal']} r={D.pay.filter(x => !x.voided_at).map(x => [tgl(x.paid_on), rp(x.amount)])} /></div>
   </>)
 }
-
+ 
 function Pengaturan({ me, D, load }) {
   const [inv, setInv] = useState([]), [pf, setPf] = useState([]), [au, setAu] = useState([]), [m, setM] = useState(null)
   const ref = useCallback(async () => {
@@ -415,3 +432,4 @@ function Pengaturan({ me, D, load }) {
     {m && <Modal title={m.title} fields={m.fields} onSave={m.save} onClose={() => setM(null)} />}
   </>)
 }
+ 
